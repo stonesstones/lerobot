@@ -64,5 +64,8 @@ RUN echo 'if [ "$HOME" != "/root" ]; then ln -sf /root/.local/bin/poetry $HOME/.
 RUN poetry config virtualenvs.create false
 RUN poetry config virtualenvs.in-project true
 
+# Install uv
+RUN wget -qO- https://astral.sh/uv/install.sh | sh
+
 # Set EGL as the rendering backend for MuJoCo
 ENV MUJOCO_GL="egl"

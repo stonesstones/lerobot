@@ -1,0 +1,35 @@
+version: "2.4"
+
+################################################################################
+services:
+  lerobot-gpu-dev:
+    image: lerobot:${IMAGE_TAG:-latest}   # タグによる切り替え：DEEP_IMAGE_TAG が未設定なら latest を使用
+    hostname: ${HOSTNAME}
+    container_name: ${CONTAINER:-defualt}
+    runtime: nvidia
+    privileged: true
+    environment:
+      # Display X Server GUI.
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      # Configure Nvidia Docker interface.
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - NVIDIA_REQUIRE_CUDA=cuda>=11.0
+    user: 0:0
+    build:
+      context: ./lerobot-gpu-dev
+      dockerfile: Dockerfile
+    shm_size: '16gb'
+    volumes:
+      # Map repository sources.
+      - ../:/home/lerobot
+      - ${DATASET_PATH}:/home/datasets
+      # Grant display access to X Server.
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      # 権限を一致させる
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/group:/etc/group:ro
+    working_dir: /home
+    network_mode: host
+    command: /home/lerobot/docker/scripts/initialize-docker-container.sh
