@@ -44,6 +44,7 @@ from lerobot.common.policies.utils import (
     populate_queues,
 )
 
+action_key = "action.relative"
 
 class DiffusionPolicy(PreTrainedPolicy):
     """
@@ -82,7 +83,6 @@ class DiffusionPolicy(PreTrainedPolicy):
         self._queues = None
 
         self.diffusion = DiffusionModel(config)
-
         self.reset()
 
     def get_optim_params(self) -> dict:
@@ -92,7 +92,7 @@ class DiffusionPolicy(PreTrainedPolicy):
         """Clear observation and action queues. Should be called on `env.reset()`"""
         self._queues = {
             "observation.state": deque(maxlen=self.config.n_obs_steps),
-            "action": deque(maxlen=self.config.n_action_steps),
+            action_key: deque(maxlen=self.config.n_action_steps),
         }
         if self.config.image_features:
             self._queues["observation.images"] = deque(maxlen=self.config.n_obs_steps)
@@ -130,17 +130,17 @@ class DiffusionPolicy(PreTrainedPolicy):
         # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
 
-        if len(self._queues["action"]) == 0:
+        if len(self._queues[action_key]) == 0:
             # stack n latest observations from the queue
             batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
             actions = self.diffusion.generate_actions(batch)
 
             # TODO(rcadene): make above methods return output dictionary?
-            actions = self.unnormalize_outputs({"action": actions})["action"]
+            actions = self.unnormalize_outputs({action_key: actions})[action_key]
 
-            self._queues["action"].extend(actions.transpose(0, 1))
+            self._queues[action_key].extend(actions.transpose(0, 1))
 
-        action = self._queues["action"].popleft()
+        action = self._queues[action_key].popleft()
         return action
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, None]:
@@ -316,10 +316,10 @@ class DiffusionModel(nn.Module):
         }
         """
         # Input validation.
-        assert set(batch).issuperset({"observation.state", "action", "action_is_pad"})
+        assert set(batch).issuperset({"observation.state", action_key, f"{action_key}_is_pad"})
         assert "observation.images" in batch or "observation.environment_state" in batch
         n_obs_steps = batch["observation.state"].shape[1]
-        horizon = batch["action"].shape[1]
+        horizon = batch[action_key].shape[1]
         assert horizon == self.config.horizon
         assert n_obs_steps == self.config.n_obs_steps
 
@@ -327,7 +327,7 @@ class DiffusionModel(nn.Module):
         global_cond = self._prepare_global_conditioning(batch)  # (B, global_cond_dim)
 
         # Forward diffusion.
-        trajectory = batch["action"]
+        trajectory = batch[action_key]
         # Sample noise to add to the trajectory.
         eps = torch.randn(trajectory.shape, device=trajectory.device)
         # Sample a random noising timestep for each item in the batch.
@@ -348,7 +348,7 @@ class DiffusionModel(nn.Module):
         if self.config.prediction_type == "epsilon":
             target = eps
         elif self.config.prediction_type == "sample":
-            target = batch["action"]
+            target = batch[action_key]
         else:
             raise ValueError(f"Unsupported prediction type {self.config.prediction_type}")
 
@@ -356,12 +356,12 @@ class DiffusionModel(nn.Module):
 
         # Mask loss wherever the action is padded with copies (edges of the dataset trajectory).
         if self.config.do_mask_loss_for_padding:
-            if "action_is_pad" not in batch:
+            if f"{action_key}_is_pad" not in batch:
                 raise ValueError(
                     "You need to provide 'action_is_pad' in the batch when "
                     f"{self.config.do_mask_loss_for_padding=}."
                 )
-            in_episode_bound = ~batch["action_is_pad"]
+            in_episode_bound = ~batch[f"{action_key}_is_pad"]
             loss = loss * in_episode_bound.unsqueeze(-1)
 
         return loss.mean()
